@@ -2,14 +2,14 @@
 
 from max30102 import MAX30102, MAX30105_PULSE_AMP_HIGH, MAX30105_PULSE_AMP_MEDIUM, MAX30105_PULSE_AMP_LOW
 from machine import Pin, SoftI2C
-import uasyncio
+import gc
 from time import sleep, ticks_ms
 from ulab import numpy as np
+from math import pi, sin
 
 i2c = SoftI2C(scl=Pin(7), sda=Pin(6), freq=400000)
 sensor = MAX30102(i2c=i2c)
 
-data_buffer = list()
 
 sleep(1)
 if sensor.i2c_address not in i2c.scan():
@@ -22,15 +22,20 @@ else:
 
 sensor.setup_sensor()
 
-sensor.set_sample_rate(400)
-sensor.set_fifo_average(8)
+SAMPLE_RATE = 200
+FIFO_AVERAGE = 8
 
-sensor.set_active_leds_amplitude(MAX30105_PULSE_AMP_HIGH)
+sensor.set_sample_rate(SAMPLE_RATE)
+sensor.set_fifo_average(FIFO_AVERAGE)
 
-def gather_sensor_data(sensor):
+sensor.set_active_leds_amplitude(MAX30105_PULSE_AMP_MEDIUM)
+
+
+
+def gather_sensor_data(sensor,bufferlen):
     global data_buffer
     data_buffer = list()
-    while len(data_buffer) < 260:
+    while len(data_buffer) < bufferlen:
         if sensor.check():
             if sensor.available():
                 ir = sensor.pop_ir_from_storage()
@@ -39,53 +44,52 @@ def gather_sensor_data(sensor):
 def normalize_data(data):
     data = np.array(data)
     mean = np.mean(data)
-#     std = np.std(data)
-#     distance_from_mean = abs(data-mean)
-#     max_deviations = 2
-#     data[distance_from_mean < max_deviations * std]
-        
+
     return data - mean
 
-def remove_baseline_moving_average(data):
+
+
+def moving_average_filter(data, m):
+    data = np.array(data) / 5
+    n = len(data)
+
+    idx = int((m-1)/2)
+    filtered_data = np.zeros(len(data)-(m-1))
+
+    first_point = 0
+
+    for i in range(-idx,idx+1):
+        first_point += data[idx + i]
+
+    filtered_data[0]
+
+    for i in range(1,len(data)-(m-1)):
+        point = filtered_data[i-1] + data[i+(m-1)] - data[i-1]
+        filtered_data[i] = round(point,4)
+
+    return filtered_data
+
+def remove_baseline_moving_average(data, m):
     data = np.array(data)
-    # replace each data point with the average of neighbor samples in a window of size n 
-    n = 4
-#     kernel = np.ones((1,n))/n
-#     kernel = kernel[0,:]
-# 
-#     filtered_data = np.convolve(data,kernel)[n-1:n+len(data)-1]
-    
-    # The length of the new array is n + len(data) - 1, so 131
-    # To end up with an array 128 units long, I'll slice the data from 3:130
-    
-    filtered_data = np.zeros(len(data))
-
-    for i in range(len(data)):
-        if i < n-1:
-            n+=1
-        else:
-            n=n
-        
-        for j in range(n):
-            filtered_data[i] += data[i-j]
-
-        filtered_data[i] /= n
-
-    return (data-filtered_data)
-
-def find_fundamental_frequency(data, sr=50):
-    zero_pad = np.zeros(256, dtype=np.float)
-    data_zeroes = np.concatenate((data,zero_pad))
-    fft_real, fft_imaginary = np.fft.fft(data_zeroes)
-    time= np.arange(len(data_zeroes))
-    N = len(data_zeroes)
+    # replace each data point with the average of neighbor samples in a window of size n
+    filtered_data = moving_average_filter(data, m)
+    idx = int((m-1)/2)
+    return (data[idx:len(data)-idx]-filtered_data)
+ 
+def find_fundamental_frequency(data, sr):
+    # To resolve frequencies to a 3 bpm resolution, a waveform frequency resolution of 0.05 Hz is necessary
+#     zero_pad = np.zeros(len(data), dtype=np.float)
+#     data = np.concatenate((zero_pad,data))
+    fft_real, fft_imaginary = np.fft.fft(data)
+    time= np.arange(len(data))
+    N = len(data)
     T = N / sr
     freq = time / T
     
     freq_magnitude = np.sqrt(fft_real ** 2 + fft_imaginary ** 2)
     
     freq_dist = dict(zip(freq,freq_magnitude))
-    freq_dist = { key:value for (key,value) in freq_dist.items() if key > 0.6 and key < 3.0 }
+    freq_dist = { key:value for (key,value) in freq_dist.items() if key > 0.6 and key < 3.0 } 
     
     
     fundamental = max(freq_dist, key=freq_dist.get)
@@ -122,53 +126,42 @@ def find_max_autocorrelation (data,m=25):
         return (aut, nlag+2)
     
     return (aut,m)
+    
+def write_to_csv(filename,data):
+    with open(filename, "a+") as file:
+        entry = ','.join(str(i) for i in data)
+        file.write(entry)
+        file.write('\n')
+
+
         
+for i in range(5):
 
+    gather_sensor_data(sensor,128)
+    data = normalize_data(data_buffer)
+    write_to_csv("IR_signal.csv",data)
 
-# async def main():
-#     #Set up pins
-# 
-#     i2c = SoftI2C(scl=Pin(7), sda=Pin(6), freq=400000)
-#     sensor = MAX30102(i2c=i2c)
-# 
-#     sleep(1)
-#     if sensor.i2c_address not in i2c.scan():
-#         print("Sensor not found.")
-#         return
-#     elif not (sensor.check_part_id()):
-#         # Check that the targeted sensor is compatible
-#         print("I2C device ID not corresponding to MAX30102 or MAX30105.")
-#         return
-#     else:
-#         print("Sensor connected and recognized.")
-# 
-#     sensor.setup_sensor()
-# 
-#     sensor.set_sample_rate(400)
-#     sensor.set_fifo_average(8)
-# 
-#     sensor.set_active_leds_amplitude(MAX30105_PULSE_AMP_MEDIUM)
-        
-for i in range(10):
-
-    gather_sensor_data(sensor)
-    data = normalize_data(data_buffer[2:258])
+    # gc.collect()
+    # window = 7
+    # idx = int((window-1)/2)
+    # passes = 4
+    
+    # filtered_data = moving_average_filter(data, window)
+    
+    # for i in range(passes-1):
+    
+    #     filtered_data = moving_average_filter(filtered_data, window)
+    
+    
+    # filtered_data = data[passes*idx:len(data)-passes*idx] - filtered_data
+    
+    # for i in filtered_data:
+    #      print(i)
+    #      sleep(0.05)
 #     data = remove_baseline_moving_average(data)
-    bpm = find_fundamental_frequency(data) * 60
-    bpm = round(bpm,0)
-    print("BPM: " + str(bpm))
+#     sr = int(SAMPLE_RATE/FIFO_AVERAGE)
+#     bpm = find_fundamental_frequency(data, sr) * 60
+#     bpm = round(bpm,0)
+#     print("BPM: " + str(bpm))
 
-#     with open ('IR_signal.csv', 'a+') as file:
-#         for point in data:
-#             print(point)
-#             file.write(str(point) + ',')
-#         file.write('\n')
-        
-        
-        
-#     first_local_maximum = find_max_autocorrelation(data,25)
-#     if first_local_maximum[0] > 0.25:
-#         bpm = 1500 / first_local_maximum[1]
-#         print('Estimate BPM: ' + str(bpm))
-#     else:
-#         print('Waiting for better signal')
+
