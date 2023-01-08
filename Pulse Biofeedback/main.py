@@ -116,8 +116,8 @@ def check_peaks(data,peak_indices):
         peak_differences.append(abs(peak_indices[i+1] - peak_indices[i]))
     if len(peak_differences) > 0:
         median_difference = np.median(np.array(peak_differences))
-        quality = calc_autocorrelation(data,median_difference)
-        if quality > 0.4:
+        quality = calc_autocorrelation(data,int(median_difference))
+        if quality > 0.25:
             return median_difference
         else:
             return None
@@ -139,14 +139,13 @@ for i in range(5):
     data = normalize_data(data_buffer)
     data = remove_artifact(data)
     data = remove_baseline(data)
-    peak_distance = check_peaks(detect_peaks(data),25)
+    peak_distance = check_peaks(data,detect_peaks(data))
     
     if peak_distance:
         rate = 1 / (peak_distance/sr) * 60
         print("BPM: {}".format(round(rate,1)))
     else: 
-        print("Rate could not estimated with certainy from signal")
-    
+        print("Rate could not estimated with certainty from signal")
     
 
     write_to_csv("IR_signal.csv",data)
