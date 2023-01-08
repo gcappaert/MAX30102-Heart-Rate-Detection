@@ -47,85 +47,69 @@ def normalize_data(data):
 
     return data - mean
 
-
-
-def moving_average_filter(data, m):
-    data = np.array(data) / 5
-    n = len(data)
-
-    idx = int((m-1)/2)
-    filtered_data = np.zeros(len(data)-(m-1))
-
-    first_point = 0
-
-    for i in range(-idx,idx+1):
-        first_point += data[idx + i]
-
-    filtered_data[0]
-
-    for i in range(1,len(data)-(m-1)):
-        point = filtered_data[i-1] + data[i+(m-1)] - data[i-1]
-        filtered_data[i] = round(point,4)
-
-    return filtered_data
-
-def remove_baseline_moving_average(data, m):
-    data = np.array(data)
-    # replace each data point with the average of neighbor samples in a window of size n
-    filtered_data = moving_average_filter(data, m)
-    idx = int((m-1)/2)
-    return (data[idx:len(data)-idx]-filtered_data)
- 
-def find_fundamental_frequency(data, sr):
-    # To resolve frequencies to a 3 bpm resolution, a waveform frequency resolution of 0.05 Hz is necessary
-#     zero_pad = np.zeros(len(data), dtype=np.float)
-#     data = np.concatenate((zero_pad,data))
-    fft_real, fft_imaginary = np.fft.fft(data)
-    time= np.arange(len(data))
-    N = len(data)
-    T = N / sr
-    freq = time / T
-    
-    freq_magnitude = np.sqrt(fft_real ** 2 + fft_imaginary ** 2)
-    
-    freq_dist = dict(zip(freq,freq_magnitude))
-    freq_dist = { key:value for (key,value) in freq_dist.items() if key > 0.6 and key < 3.0 } 
-    
-    
-    fundamental = max(freq_dist, key=freq_dist.get)
-    return fundamental
-
-def calc_autocorrelation (data, m):
+def suppress_outliers(data):
     mean = np.mean(data)
-    ndata = data-mean
-    variance = np.sum(ndata**2) / len(data)
-    tmp = np.dot(ndata[m:], ndata[:-m])
-    c = tmp / len(data) / variance
-    return c
+    sd = np.std(data)
+    med = np.median(data)
+    distance_from_mean = abs(data - mean)
+    max_deviations = 3
     
-def find_max_autocorrelation (data,m=25):
-    maximum_lag = 40
-    minimum_lag = 6
-    aut = calc_autocorrelation(data,m)
-    right = calc_autocorrelation(data,m+1)
-    if right > aut:
-        nlag = m + 2
-        while right > aut and nlag < maximum_lag:
-            #step to the right until the value starts to get lower
-            aut = right
-            right = calc_autocorrelation(data,nlag)
-            nlag += 1
-        return (aut, nlag-2)
-    left = calc_autocorrelation(data,m-1)
-    if left > aut:
-        nlag = m - 2
-        while left > aut and nlag > minimum_lag:
-            aut = left
-            left = calc_autocorrelation(data,nlag)
-            nlag -= 1
-        return (aut, nlag+2)
+    low = np.median(data[data < med])
+    high = np.median(data[data > med])
+
+    # Deal with the artifact sometimes caused by the first reading coming in way above or way below average as the sensor calibrates its baseline
+    if distance_from_mean[0] > max_deviations * sd:
+        data[0] = data[1]
+        distance_from_mean[0] = distance_from_mean[1]
+
+
+    # Impute upper quartile for the high outliers and lower quartile for the low outliers
+
+    data[(distance_from_mean > max_deviations * sd) & (data > mean)] = med
+    data[(distance_from_mean > max_deviations * sd) & (data < mean)] = low
+ 
+    return data
     
-    return (aut,m)
+def remove_baseline(data):
+    x = np.arange(len(data))
+    polynomial = np.polyfit(x, data,deg=1)
+    baseline = x * polynomial[0] + polynomial[1]
+    baseline_removed = data-baseline
+    return baseline_removed
+
+def detect_peaks(signal):
+    """Naive linear search to find the peaks of the algorithm
+    
+    Returns a tuple of peak indices
+    """
+    peak_indices = []
+    baseline = np.median(signal[signal > np.median(signal)])
+    peak_value = -999
+    peak_index = -999
+
+    for i, value in enumerate(signal):
+        if value > baseline:
+            if value > peak_value or peak_value == -999:
+                peak_index = i
+                peak_value = value
+        elif value < baseline and peak_value != -999:
+            peak_indices.append(peak_index)
+            peak_index = -999
+            peak_value = -999
+    
+    if peak_index != -999:
+        peak_indices.append(peak_index)
+
+    
+    return tuple(peak_indices)
+
+def rate_from_peaks(peak_indices, sample_rate):
+    peak_differences = []
+    for i in range(len(peak_indices)-1):
+        peak_differences.append(abs(peak_indices[i+1] - peak_indices[i]))
+    
+    rate = np.min(np.array(peak_differences)) / 25 * 60
+    return rate
     
 def write_to_csv(filename,data):
     with open(filename, "a+") as file:
@@ -137,8 +121,14 @@ def write_to_csv(filename,data):
         
 for i in range(5):
 
-    gather_sensor_data(sensor,128)
+    gather_sensor_data(sensor,100)
     data = normalize_data(data_buffer)
+    data = suppress_outliers(data)
+    data = remove_baseline(data)
+    rate = rate_from_peaks(detect_peaks(data),25)
+
+    print("BPM: {}".format(rate))
+
     write_to_csv("IR_signal.csv",data)
 
     # gc.collect()
