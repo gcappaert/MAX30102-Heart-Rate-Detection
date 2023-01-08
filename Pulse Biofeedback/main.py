@@ -3,7 +3,7 @@
 from max30102 import MAX30102, MAX30105_PULSE_AMP_HIGH, MAX30105_PULSE_AMP_MEDIUM, MAX30105_PULSE_AMP_LOW
 from machine import Pin, SoftI2C
 import gc
-from time import sleep, ticks_ms
+from time import sleep, ticks_us, ticks_diff
 from ulab import numpy as np
 from math import pi, sin
 
@@ -30,16 +30,27 @@ sensor.set_fifo_average(FIFO_AVERAGE)
 
 sensor.set_active_leds_amplitude(MAX30105_PULSE_AMP_MEDIUM)
 
+compute_frequency = False
 
 
 def gather_sensor_data(sensor,bufferlen):
     global data_buffer
+    t_start = ticks_us()
+    samples_n = 0
     data_buffer = list()
     while len(data_buffer) < bufferlen:
         if sensor.check():
             if sensor.available():
                 ir = sensor.pop_ir_from_storage()
                 data_buffer.append(ir)
+            if compute_frequency:
+                if ticks_diff(ticks_us(), t_start) >= 999999:
+                    f_HZ = samples_n
+                    samples_n = 0
+                    print("acquisition frequency = ", f_HZ)
+                    t_start = ticks_us()
+                else:
+                    samples_n += 1
 
 def normalize_data(data):
     data = np.array(data)
@@ -47,32 +58,20 @@ def normalize_data(data):
 
     return data - mean
 
-def suppress_outliers(data):
+def remove_artifact(data):
+    """Handle the artifact caused by the first reading sometimes coming in very high or very low"""
     mean = np.mean(data)
     sd = np.std(data)
-    med = np.median(data)
-    distance_from_mean = abs(data - mean)
     max_deviations = 3
     
-    low = np.median(data[data < med])
-    high = np.median(data[data > med])
-
-    # Deal with the artifact sometimes caused by the first reading coming in way above or way below average as the sensor calibrates its baseline
-    if distance_from_mean[0] > max_deviations * sd:
+    if abs(data[0] - mean) > max_deviations * sd:
         data[0] = data[1]
-        distance_from_mean[0] = distance_from_mean[1]
-
-
-    # Impute upper quartile for the high outliers and lower quartile for the low outliers
-
-    data[(distance_from_mean > max_deviations * sd) & (data > mean)] = med
-    data[(distance_from_mean > max_deviations * sd) & (data < mean)] = low
- 
-    return data
     
+    return data
+
 def remove_baseline(data):
     x = np.arange(len(data))
-    polynomial = np.polyfit(x, data,deg=1)
+    polynomial = np.polyfit(x, data,1)
     baseline = x * polynomial[0] + polynomial[1]
     baseline_removed = data-baseline
     return baseline_removed
@@ -83,7 +82,7 @@ def detect_peaks(signal):
     Returns a tuple of peak indices
     """
     peak_indices = []
-    baseline = np.median(signal[signal > np.median(signal)])
+    baseline = 0
     peak_value = -999
     peak_index = -999
 
@@ -107,9 +106,13 @@ def rate_from_peaks(peak_indices, sample_rate):
     peak_differences = []
     for i in range(len(peak_indices)-1):
         peak_differences.append(abs(peak_indices[i+1] - peak_indices[i]))
-    
-    rate = np.min(np.array(peak_differences)) / 25 * 60
-    return rate
+
+    if len(peak_differences) > 0:
+        median_difference = np.median(np.array(peak_differences))
+        rate = 1 / (median_difference/25) * 60
+        return rate
+    else:
+        return "No peaks detected in signal. A rate could not be calculated."
     
 def write_to_csv(filename,data):
     with open(filename, "a+") as file:
@@ -123,15 +126,17 @@ for i in range(5):
 
     gather_sensor_data(sensor,100)
     data = normalize_data(data_buffer)
-    data = suppress_outliers(data)
+    data = remove_artifact(data)
     data = remove_baseline(data)
+    
     rate = rate_from_peaks(detect_peaks(data),25)
-
-    print("BPM: {}".format(rate))
+    
+    print("BPM: {}".format(round(rate,1)))
 
     write_to_csv("IR_signal.csv",data)
 
-    # gc.collect()
+
+# gc.collect()
     # window = 7
     # idx = int((window-1)/2)
     # passes = 4
