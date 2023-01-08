@@ -25,11 +25,11 @@ sensor.setup_sensor()
 SAMPLE_RATE = 200
 FIFO_AVERAGE = 8
 
+sr = SAMPLE_RATE/FIFO_AVERAGE
+
 sensor.set_sample_rate(SAMPLE_RATE)
 sensor.set_fifo_average(FIFO_AVERAGE)
-
 sensor.set_active_leds_amplitude(MAX30105_PULSE_AMP_MEDIUM)
-
 compute_frequency = False
 
 
@@ -102,17 +102,28 @@ def detect_peaks(signal):
     
     return tuple(peak_indices)
 
-def rate_from_peaks(peak_indices, sample_rate):
+def calc_autocorrelation (data, m):
+    mean = np.mean(data)
+    ndata = data-mean
+    variance = np.sum(ndata**2) / len(data)
+    tmp = np.dot(ndata[m:], ndata[:-m])
+    c = tmp / len(data) / variance
+    return c
+
+def check_peaks(data,peak_indices):
     peak_differences = []
     for i in range(len(peak_indices)-1):
         peak_differences.append(abs(peak_indices[i+1] - peak_indices[i]))
-
     if len(peak_differences) > 0:
         median_difference = np.median(np.array(peak_differences))
-        rate = 1 / (median_difference/25) * 60
-        return rate
+        quality = calc_autocorrelation(data,median_difference)
+        if quality > 0.4:
+            return median_difference
+        else:
+            return None
     else:
-        return "No peaks detected in signal. A rate could not be calculated."
+        return None
+
     
 def write_to_csv(filename,data):
     with open(filename, "a+") as file:
@@ -128,35 +139,17 @@ for i in range(5):
     data = normalize_data(data_buffer)
     data = remove_artifact(data)
     data = remove_baseline(data)
+    peak_distance = check_peaks(detect_peaks(data),25)
     
-    rate = rate_from_peaks(detect_peaks(data),25)
+    if peak_distance:
+        rate = 1 / (peak_distance/sr) * 60
+        print("BPM: {}".format(round(rate,1)))
+    else: 
+        print("Rate could not estimated with certainy from signal")
     
-    print("BPM: {}".format(round(rate,1)))
+    
 
     write_to_csv("IR_signal.csv",data)
 
-
-# gc.collect()
-    # window = 7
-    # idx = int((window-1)/2)
-    # passes = 4
-    
-    # filtered_data = moving_average_filter(data, window)
-    
-    # for i in range(passes-1):
-    
-    #     filtered_data = moving_average_filter(filtered_data, window)
-    
-    
-    # filtered_data = data[passes*idx:len(data)-passes*idx] - filtered_data
-    
-    # for i in filtered_data:
-    #      print(i)
-    #      sleep(0.05)
-#     data = remove_baseline_moving_average(data)
-#     sr = int(SAMPLE_RATE/FIFO_AVERAGE)
-#     bpm = find_fundamental_frequency(data, sr) * 60
-#     bpm = round(bpm,0)
-#     print("BPM: " + str(bpm))
 
 
