@@ -2,16 +2,14 @@
 
 from max30102 import MAX30102, MAX30105_PULSE_AMP_HIGH, MAX30105_PULSE_AMP_MEDIUM, MAX30105_PULSE_AMP_LOW
 from machine import Pin, SoftI2C
-import gc
 from time import sleep, ticks_us, ticks_diff
 from ulab import numpy as np
-from math import pi, sin
 
+# Intialize the sensor
 i2c = SoftI2C(scl=Pin(7), sda=Pin(6), freq=400000)
 sensor = MAX30102(i2c=i2c)
 
-
-sleep(1)
+# Check that sensor is found at the correct hardware address
 if sensor.i2c_address not in i2c.scan():
     print("Sensor not found.")
 elif not (sensor.check_part_id()):
@@ -22,35 +20,32 @@ else:
 
 sensor.setup_sensor()
 
+# Choose sampling rate and numer of samples to average. Averaging samples reduces noise
+# In theory, many options are available. In practice, only 200 and 8 work consistently 
+
 SAMPLE_RATE = 200
 FIFO_AVERAGE = 8
-
 sr = SAMPLE_RATE/FIFO_AVERAGE
 
 sensor.set_sample_rate(SAMPLE_RATE)
 sensor.set_fifo_average(FIFO_AVERAGE)
 sensor.set_active_leds_amplitude(MAX30105_PULSE_AMP_MEDIUM)
-compute_frequency = False
 
 
-def gather_sensor_data(sensor,bufferlen):
+# Collect sensor data and store it in a buffer list.
+
+def gather_sensor_data(sensor,bufferlen=100):
     global data_buffer
-    t_start = ticks_us()
-    samples_n = 0
     data_buffer = list()
     while len(data_buffer) < bufferlen:
         if sensor.check():
             if sensor.available():
                 ir = sensor.pop_ir_from_storage()
-                data_buffer.append(ir)
-            if compute_frequency:
-                if ticks_diff(ticks_us(), t_start) >= 999999:
-                    f_HZ = samples_n
-                    samples_n = 0
-                    print("acquisition frequency = ", f_HZ)
-                    t_start = ticks_us()
-                else:
-                    samples_n += 1
+                red = sensor.pop_red_from_storage()
+                data_buffer.append((ir,red))
+
+
+# Functions to remove DC component, sensor artifact, and center signal around a baseline
 
 def normalize_data(data):
     data = np.array(data)
@@ -75,6 +70,8 @@ def remove_baseline(data):
     baseline = x * polynomial[0] + polynomial[1]
     baseline_removed = data-baseline
     return baseline_removed
+
+# Finds peaks in the signal, correponding to beats
 
 def detect_peaks(signal):
     """Naive linear search to find the peaks of the algorithm
@@ -110,6 +107,9 @@ def calc_autocorrelation (data, m):
     c = tmp / len(data) / variance
     return c
 
+# Given peaks of a signal, finds median distance between peaks (to account for missed peaks or noise)
+# Checks that determined distance is a reasonable estimate of the period of the signal
+
 def check_peaks(data,peak_indices):
     peak_differences = []
     for i in range(len(peak_indices)-1):
@@ -136,7 +136,8 @@ def write_to_csv(filename,data):
 for i in range(5):
 
     gather_sensor_data(sensor,100)
-    data = normalize_data(data_buffer)
+    ir_data = np.array([x[0] for x in data_buffer])
+    data = normalize_data(ir_data)
     data = remove_artifact(data)
     data = remove_baseline(data)
     peak_distance = check_peaks(data,detect_peaks(data))
@@ -145,7 +146,7 @@ for i in range(5):
         rate = 1 / (peak_distance/sr) * 60
         print("BPM: {}".format(round(rate,1)))
     else: 
-        print("Rate could not estimated with certainty from signal")
+        print("Rate could not estimated from signal with certainty")
     
 
     write_to_csv("IR_signal.csv",data)
