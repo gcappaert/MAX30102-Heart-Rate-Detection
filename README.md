@@ -12,7 +12,7 @@ It makes use of @n-elia's driver library for the MAX30102 oxygen sensor as well 
 
 * As @n-elia pointed out in his documentation for his driver library, some of the MAX30102 clones you can buy have the infrared and red registers switched. This was the case for mine.
 
-* As with all optial PPG sensors, ambient light makes a big difference. Housing the sensor in an opaque sleeve will greatly improve signal quality.
+* As with all optical PPG sensors, ambient light makes a big difference. Housing the sensor in an opaque sleeve will greatly improve signal quality.
 
 ## Steps for the future
 
