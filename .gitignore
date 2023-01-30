@@ -1,7 +1,9 @@
 # Images
 *.png
+*.pdf
 # Notebooks
 *.ipynb
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
