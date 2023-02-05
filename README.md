@@ -2,7 +2,7 @@
 
 This program was written for a RP2040 running Micropython firmware with the fabulous ulab extension (a stripped-down numpy for Micropython). As written at present, it outputs HR and SPO2 data to a display, but the next step is to add an SD card, build a housing and attachment mechanism, and use it for nighttime O2 monitoring. 
 
-It makes use of @n-elia's driver library for the MAX30102 oxygen sensor as well as an SSD1306 driver library. I naively thought it would be trivially easy to obtain good quality HR and SPO2 data from the MAX30102 senor, but this was not the case. I began following the approach used by @aromring in his excellent Instructable tutorial, but deviated somewhat from his approach. His method of checking signal quality using autocorrelation and pearson correlation for the red and IR signals greatly improved accuracy. 
+It makes use of [@n-elia's driver library](https://github.com/n-elia/MAX30102-MicroPython-driver) for the MAX30102 oxygen sensor as well as an SSD1306 driver library. I naively thought it would be trivially easy to obtain good quality HR and SPO2 data from the MAX30102 senor, but this was not the case. I began following the approach used by @aromring in his [excellent Instructable tutorial](https://www.instructables.com/Pulse-Oximeter-With-Much-Improved-Precision/), but deviated somewhat from his approach. His method of checking signal quality using autocorrelation and pearson correlation for the red and IR signals greatly improved accuracy. 
 
 ## Pitfalls with MAX30102 sensor and PPG signal processing that may help other users:
 
